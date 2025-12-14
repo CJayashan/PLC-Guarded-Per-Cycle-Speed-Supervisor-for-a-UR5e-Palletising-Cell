@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ur5e_cell_moveit_config</name>
+  <version>0.1.0</version>
+  <description>MoveIt config (no GUI) for UR5e cell using moveit_configs_utils.</description>
+  <maintainer email="you@example.com">Chathu</maintainer>
+  <license>MIT</license>
+
+  <!-- Python build system -->
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <!-- Launch + xacro (used in our launch files) -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <!-- RViz with MoveIt plugin (rviz2 pulls rviz_common + rviz_default_plugins transitively) -->
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>moveit_ros_visualization</exec_depend>
+
+  <!-- MoveIt core runtime pieces we assemble/use at launch -->
+  <exec_depend>moveit_configs_utils</exec_depend>
+  <exec_depend>moveit_ros_move_group</exec_depend>
+  <exec_depend>moveit_planners_ompl</exec_depend>
+  <exec_depend>moveit_kinematics</exec_depend>
+  <exec_depend>moveit_simple_controller_manager</exec_depend>
+
+  <!-- We load the robot xacro from this package at runtime -->
+  <exec_depend>ur5e_cell_description</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<robot name="ur5e_cell" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+
+  <xacro:arg name="ur_type" default="ur5e"/>
+  <xacro:arg name="kinematics_params"   default="$(find ur_description)/config/$(arg ur_type)/default_kinematics.yaml"/>
+  <xacro:arg name="joint_limit_params"  default="$(find ur_description)/config/$(arg ur_type)/joint_limits.yaml"/>
+  <xacro:arg name="physical_params"     default="$(find ur_description)/config/$(arg ur_type)/physical_parameters.yaml"/>
+  <xacro:arg name="visual_params"       default="$(find ur_description)/config/$(arg ur_type)/visual_parameters.yaml"/>
+  <!-- new: hand gazebo plugin the controller YAML -->
+  <xacro:arg name="simulation_controllers" default="$(find ur5e_cell_bringup)/config/controllers.yaml"/>
+
+  <!-- Simple payload "tray" attached at tool0 (TCP side) -->
+  <!-- UR5e rated max payload is 5 kg (tool + tray + workpiece). In real hardware,
+  keep total payload <= 5 kg. Here we use this for simulation studies only. -->
+  <xacro:arg name="payload_mass"    default="1.0"/>  <!-- [kg], change this to 0, 1, 2, ... -->
+  <xacro:arg name="payload_size_x"  default="0.2"/> <!-- [m] -->
+  <xacro:arg name="payload_size_y"  default="0.01"/>
+  <xacro:arg name="payload_size_z"  default="0.2"/>
+
+  <link name="world"/>
+
+  <xacro:ur_robot
+      name="ur5e_cell"
+      tf_prefix=""
+      parent="world"
+      joint_limits_parameters_file="$(arg joint_limit_params)"
+      kinematics_parameters_file="$(arg kinematics_params)"
+      physical_parameters_file="$(arg physical_params)"
+      visual_parameters_file="$(arg visual_params)"
+      use_fake_hardware="false"
+      fake_sensor_commands="false"
+      sim_gazebo="true">
+    <origin xyz="0 0 0.9" rpy="0 0 0"/>
+  </xacro:ur_robot>
+
+  <!-- Simple payload box representing tray/tool load at the TCP.
+       Attached to ${ur_type}_tool0 (UR tool flange).
+       UR5e rated maximum payload is 5 kg (11 lb) including tool and part.
+       In real hardware, keep gripper + tray + workpiece below this limit. -->
+  <link name="payload_box">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="$(arg payload_mass)"/>
+      <!-- Approximate inertia for a small box; exact values are not critical here -->
+      <inertia
+        ixx="0.001" ixy="0.0" ixz="0.0"
+        iyy="0.001" iyz="0.0"
+        izz="0.001"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="$(arg payload_size_x) $(arg payload_size_y) $(arg payload_size_z)"/>
+      </geometry>
+      <material name="payload_grey">
+        <color rgba="0.6 0.6 0.6 1.0"/>
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="$(arg payload_size_x) $(arg payload_size_y) $(arg payload_size_z)"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="tool0_to_payload_box" type="fixed">
+    <parent link="tool0"/>
+    <child  link="payload_box"/>
+    <!-- move the box a bit along tool Z, so it sits like a tray on the flange -->
+    <origin xyz="0 0 0.12" rpy="0 0 0"/>
+  </joint>
+
+
+  <gazebo>
+    <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
+      <parameters>$(arg simulation_controllers)</parameters>
+    </plugin>
+  </gazebo>
+
+</robot>
+

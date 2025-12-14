@@ -1,0 +1,31 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+.venv/
+venv/
+.env
+
+# --- ROS 2 / colcon ---
+**/build/
+**/install/
+**/log/
+**/.colcon_install_layout
+
+# --- IDE ---
+.vscode/
+*.swp
+
+# --- Data / logs ---
+logs/
+*.bag
+*.db3
+*.csv
+
+# --- Downloads / binaries ---
+*.AppImage
