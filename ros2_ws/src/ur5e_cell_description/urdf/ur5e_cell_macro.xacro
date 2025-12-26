@@ -5,16 +5,9 @@
   <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
 
  
-  <xacro:macro name="ur5e_cell" params="
-      parent
-      *origin
-      ur_type
-      joint_limits_parameters_file
-      kinematics_parameters_file
-      physical_parameters_file
-      visual_parameters_file">
+  <xacro:macro name="ur5e_cell" params="parent:='world' *origin ur_type name tf_prefix:='' kinematics_parameters_file joint_limits_parameters_file physical_parameters_file visual_parameters_file">
+    <xacro:property name="tool0_link_name" value="${tf_prefix + '_tool0' if tf_prefix else 'tool0'}"/>
 
-    
     <joint name="pedestal_joint" type="fixed">
       <xacro:insert_block name="origin"/>
       <parent link="${parent}"/>
@@ -24,8 +17,8 @@
 
    
     <xacro:ur_robot
-      name="${ur_type}"
-      tf_prefix="${ur_type}_"
+      name="${name}"
+      tf_prefix="${tf_prefix}"
       parent="pedestal"
       joint_limits_parameters_file="${joint_limits_parameters_file}"
       kinematics_parameters_file="${kinematics_parameters_file}"
@@ -55,7 +48,7 @@
 
     
     <joint name="tool0_to_simple_gripper" type="fixed">
-      <parent link="${ur_type}_tool0"/>
+      <parent link="${tool0_link_name}"/>
       <child  link="simple_gripper"/>
       <origin xyz="0 0 0.08" rpy="0 0 0"/>
     </joint>

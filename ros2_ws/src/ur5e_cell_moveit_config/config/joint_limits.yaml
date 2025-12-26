@@ -5,21 +5,21 @@
 # cases. For specific applications, higher values might lead to better execution performance.
 
 joint_limits:
-  ur5e_shoulder_pan_joint:
+  shoulder_pan_joint:
     has_acceleration_limits: true
     max_acceleration: 5.0
-  ur5e_shoulder_lift_joint:
+  shoulder_lift_joint:
     has_acceleration_limits: true
     max_acceleration: 5.0
-  ur5e_elbow_joint:
+  elbow_joint:
     has_acceleration_limits: true
     max_acceleration: 5.0
-  ur5e_wrist_1_joint:
+  wrist_1_joint:
     has_acceleration_limits: true
     max_acceleration: 5.0
-  ur5e_wrist_2_joint:
+  wrist_2_joint:
     has_acceleration_limits: true
     max_acceleration: 5.0
-  ur5e_wrist_3_joint:
+  wrist_3_joint:
     has_acceleration_limits: true
     max_acceleration: 5.0
