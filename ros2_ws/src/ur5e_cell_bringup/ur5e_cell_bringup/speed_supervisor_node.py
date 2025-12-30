@@ -10,7 +10,7 @@ class SpeedSupervisor(Node):
 
         # 1) Parameters
         # 'mode' can now be: 'constant', 'manual', or 'external'
-        self.declare_parameter('mode', 'constant')       # 'constant' | 'manual' | 'external'
+        self.declare_parameter('mode', 'constant')       # 'constant' | 'manual' | 'external' | 'ppo'
         self.declare_parameter('constant_speed', 0.5)    # 0.0 .. 1.0
         self.declare_parameter('manual_speed', 0.5)      # 0.0 .. 1.0
 
@@ -54,7 +54,7 @@ class SpeedSupervisor(Node):
         # 5) debug publisher (string with mode + speed + signals)
         self.debug_pub = self.create_publisher(String, 'speed_supervisor_debug', 10)
 
-                # --- OPC UA override state ---
+
         # Last speed coming from OPC UA tag
         self.opcua_speed = 0.5
         self.opcua_speed_received = False
@@ -125,6 +125,18 @@ class SpeedSupervisor(Node):
         # 3) Get internal speed from current mode
         internal_speed = self.compute_current_speed()
 
+        # If PPO mode: wait until PPO has published at least one external speed
+        # (unless OPC UA is in MANUAL and has a knob value)
+        if self.mode == 'ppo':
+            if not self.external_speed_valid and not (self.opcua_manual_mode and self.opcua_speed_received):
+                if not getattr(self, 'warned_waiting_ppo', False):
+                    self.get_logger().warn(
+                        "Mode is 'ppo' but no data received on 'speed_set_external' yet. "
+                        "Waiting (not publishing speed_set) until PPO starts."
+                    )
+                    self.warned_waiting_ppo = True
+                return
+
         # 4) Apply OPC UA MANUAL / AUTO override
         if self.opcua_manual_mode and self.opcua_speed_received:
             # MANUAL mode ON → operator knob wins
@@ -179,7 +191,7 @@ class SpeedSupervisor(Node):
             ).get_parameter_value().double_value
             return self.manual_speed
 
-        if self.mode == 'external':
+        if self.mode in ('external', 'ppo'):
             # If we've received at least one external value, use that
             if self.external_speed_valid:
                 return self.external_speed

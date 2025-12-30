@@ -30,6 +30,9 @@ setup(
             'cycle_logger_node = ur5e_cell_bringup.cycle_logger_node:main',
             'rule_based_supervisor_node = ur5e_cell_bringup.rule_based_supervisor_node:main',
             'bayesian_speed_supervisor_node = ur5e_cell_bringup.bayes_supervisor_node:main',
+            'ppo_speed_supervisor_node = ur5e_cell_bringup.ppo_speed_supervisor_node:main',
+            'torque_estimator_node = ur5e_cell_bringup.sim_torque_estimator_node:main',
+
             # (any other nodes here)
         ],
     },

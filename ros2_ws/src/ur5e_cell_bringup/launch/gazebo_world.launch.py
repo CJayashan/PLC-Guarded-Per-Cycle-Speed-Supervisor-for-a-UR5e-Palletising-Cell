@@ -1,16 +1,27 @@
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import IncludeLaunchDescription, TimerAction, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution, Command
+from launch.substitutions import PathJoinSubstitution, Command, LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch.substitutions import FindExecutable
+from launch.conditions import IfCondition, UnlessCondition
 import os
 
 
 def generate_launch_description():
+    # -------------------------
+    # GLOBAL KNOB (launch arg)
+    # -------------------------
+    headless_arg = DeclareLaunchArgument(
+        "headless",
+        default_value="true",
+        description="Run Gazebo without GUI (gzclient). true=headless, false=with GUI"
+    )
+    headless = LaunchConfiguration("headless")
+
     # 1) Locate bringup share directory
     bringup_share = get_package_share_directory('ur5e_cell_bringup')
 
@@ -24,10 +35,23 @@ def generate_launch_description():
         'gazebo.launch.py'
     ])
 
-    # 4) Start Gazebo with our world
-    gazebo = IncludeLaunchDescription(
+    # 4) Start Gazebo with our world (two variants: GUI / headless)
+    gazebo_with_gui = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(gazebo_launch),
-        launch_arguments={'world': world_path}.items()
+        launch_arguments={
+            'world': world_path,
+            'gui': 'true',
+        }.items(),
+        condition=UnlessCondition(headless)
+    )
+
+    gazebo_headless = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(gazebo_launch),
+        launch_arguments={
+            'world': world_path,
+            'gui': 'false',
+        }.items(),
+        condition=IfCondition(headless)
     )
 
     # 5) Robot description (URDF from xacro)
@@ -37,13 +61,12 @@ def generate_launch_description():
         'ur5e_cell_gazebo.urdf.xacro'
     ])
 
-
     robot_description = Command([
         FindExecutable(name='xacro'), ' ',
         urdf_xacro_path
     ])
 
-    # 6) Robot State Publisher - now with use_sim_time=True
+    # 6) Robot State Publisher - use_sim_time=True
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -66,29 +89,25 @@ def generate_launch_description():
         output='screen'
     )
 
-    # 8) Cycle signals node: reads FollowJointTrajectory status and publishes
-    #    zone_busy + cycle_ok for the PLC/OPC UA bridge
+    # 8) Cycle signals node
     cycle_signals_node = TimerAction(
-        period=7.5,  # start after JSB (6s) and JTC (7s)
+        period=7.5,
         actions=[
             Node(
-                package='ur5e_cell_bringup',        
-                executable='cycle_signals_node',    
+                package='ur5e_cell_bringup',
+                executable='cycle_signals_node',
                 name='cycle_signals_node',
                 parameters=[{
                     'status_topic': '/joint_trajectory_controller/follow_joint_trajectory/_action/status',
                     'use_sim_time': True,
-                    }],
+                }],
                 output='screen',
-                )
-            ],
+            )
+        ],
     )
 
-    # Delay spawn_entity so Gazebo has time to load GazeboRosFactory / spawn service
-    spawn_delayed = TimerAction(
-        period=5.0,  # seconds; increase if needed
-        actions=[spawn_entity]
-    )
+    # Delays
+    spawn_delayed = TimerAction(period=5.0, actions=[spawn_entity])
 
     spawner_jsb = TimerAction(
         period=6.0,
@@ -111,7 +130,9 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        gazebo,
+        headless_arg,
+        gazebo_with_gui,
+        gazebo_headless,
         robot_state_publisher,
         spawn_delayed,
         spawner_jsb,

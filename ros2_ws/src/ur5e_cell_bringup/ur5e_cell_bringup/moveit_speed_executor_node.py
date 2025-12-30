@@ -6,6 +6,7 @@ from typing import List, Dict
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from action_msgs.msg import GoalStatus
 
 from std_msgs.msg import Float64
 from control_msgs.action import FollowJointTrajectory
@@ -15,6 +16,9 @@ from moveit_msgs.srv import GetMotionPlan
 from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint
 from moveit_msgs.msg import RobotTrajectory
 from builtin_interfaces.msg import Duration
+from sensor_msgs.msg import JointState
+
+import time
 
 JOINT_NAMES = [
     "shoulder_pan_joint",
@@ -73,6 +77,9 @@ class MoveItSpeedExecutorNode(Node):
             Float64, self.speed_topic, self._speed_callback, 10
         )
 
+        self._last_js = None
+        self.create_subscription(JointState, "/joint_states", self._on_js, 10)
+
         # 4) MoveIt planning service client
         self.plan_client = self.create_client(GetMotionPlan, self.plan_service)
 
@@ -108,6 +115,11 @@ class MoveItSpeedExecutorNode(Node):
     def get_speed_scale(self) -> float:
         """Get the current speed scale (0.0 .. 1.0)."""
         return float(self.current_speed)
+    
+    def _on_js(self, msg: JointState):
+        # Accept only “real” joint states
+        if msg.name and msg.position and len(msg.name) == len(msg.position):
+            self._last_js = msg
 
 
     # ---------------------------------------------------
@@ -127,6 +139,15 @@ class MoveItSpeedExecutorNode(Node):
         )
         self.jtc_client.wait_for_server()
         self.get_logger().info("JTC action available.")
+
+        if not self.wait_for_joint_states(timeout_sec=5.0):
+            self.get_logger().warn("No /joint_states received after waiting. Planning may warn about empty start_state.")
+
+    def wait_for_joint_states(self, timeout_sec: float = 5.0) -> bool:
+        t0 = time.monotonic()
+        while rclpy.ok() and self._last_js is None and (time.monotonic() - t0) < timeout_sec:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        return self._last_js is not None
 
     # ---------------------------------------------------
     # Built joint goal constraints and motion plan request
@@ -155,12 +176,27 @@ class MoveItSpeedExecutorNode(Node):
         req = MotionPlanRequest()
         req.group_name = self.group_name
 
-        # start state is empty. MoveIt will use current robot state.
+       
         req.num_planning_attempts = 1
         req.allowed_planning_time = 5.0  # seconds
         req.goal_constraints.append(
             self._build_joint_constarints(JOINT_NAMES, joint_values)
         )
+
+        # Try briefly to get joint states (in case of timing races)
+        if self._last_js is None:
+            self.wait_for_joint_states(timeout_sec=1.0)
+
+        if self._last_js is not None:
+            # Fill start_state (prevents “empty JointState” warning)
+            req.start_state.joint_state.name = list(self._last_js.name)
+            req.start_state.joint_state.position = list(self._last_js.position)
+            req.start_state.joint_state.velocity = []
+            req.start_state.joint_state.effort = []
+            req.start_state.is_diff = False
+        else:
+            # Fallback: allow MoveIt to use "current state" (may print warning, but won’t abort)
+            self.get_logger().warn("Still no /joint_states; planning without explicit start_state.")
 
         # Call planning service
         plan_req = GetMotionPlan.Request()
@@ -282,7 +318,37 @@ class MoveItSpeedExecutorNode(Node):
             f"JTC finished with status {result.status}JTC result error_code={result.result.error_code}"
         )
         
-        return True
+        ok_status = (result.status == GoalStatus.STATUS_SUCCEEDED)
+        ok_code = (result.result.error_code == 0)  # for JTC, 0 is typically success
+        return ok_status and ok_code
+    
+    def reverse_robot_traj(self, traj: RobotTrajectory) -> RobotTrajectory:
+        out = RobotTrajectory()
+        out.joint_trajectory.joint_names = list(traj.joint_trajectory.joint_names)
+
+        pts = traj.joint_trajectory.points
+        if not pts:
+            return out
+
+        total = pts[-1].time_from_start.sec + pts[-1].time_from_start.nanosec * 1e-9
+
+        for p in reversed(pts):
+            np = JointTrajectoryPoint()
+            np.positions = list(p.positions)
+            np.velocities = []
+            np.accelerations = []
+            np.effort = []
+
+            old_t = p.time_from_start.sec + p.time_from_start.nanosec * 1e-9
+            new_t = total - old_t
+            sec = int(new_t)
+            nsec = int((new_t - sec) * 1e9)
+            np.time_from_start = Duration(sec=sec, nanosec=nsec)
+
+            out.joint_trajectory.points.append(np)
+
+        return out
+
     
     # ----------------------
     # MAIN CYCLE LOOP
@@ -345,7 +411,21 @@ class MoveItSpeedExecutorNode(Node):
                         f"({len(traj_A_to_B.joint_trajectory.points)} points) for reuse."
                     )
                     self.ref_traj_A_to_B = traj_A_to_B
+                    # Derive B->A from frozen A->B (no separate planning)
+                    self.ref_traj_B_to_A = self.reverse_robot_traj(traj_A_to_B)
+                    self.get_logger().info("Derived frozen B -> A by reversing frozen A -> B.")
 
+            # refresh speed right before A->B leg ---
+            rclpy.spin_once(self, timeout_sec=0.0)
+            
+            if self.speed_version != last_used_version:
+                last_used_version = self.speed_version
+                speed_scale = self.get_speed_scale()
+                self.get_logger().info(
+                    f"Speed updated, using new speed_scale for A->B={speed_scale:.3f}"
+                )
+            # -----------------------------------------------------
+            
             if traj_A_to_B.joint_trajectory.points:
                 scaled_AB = self.scale_trajectory_timing(traj_A_to_B, speed_scale)
                 ok = self.execute_joint_trajectory(scaled_AB)
@@ -357,19 +437,31 @@ class MoveItSpeedExecutorNode(Node):
                 break
 
             # C) B -> A
-            if self.freeze_path and self.ref_traj_B_to_A is not None:
+            if self.freeze_path:
+                # If not built yet (e.g., starting mid-run), derive it from frozen A->B
+                if self.ref_traj_B_to_A is None and self.ref_traj_A_to_B is not None:
+                    self.ref_traj_B_to_A = self.reverse_robot_traj(self.ref_traj_A_to_B)
+                    self.get_logger().info("Derived frozen B -> A by reversing frozen A -> B.")
+
                 self.get_logger().info("Using frozen B -> A trajectory.")
                 traj_B_to_A = self.ref_traj_B_to_A
             else:
                 self.get_logger().info("Planning B -> A...")
                 traj_B_to_A = self.plan_to_joints(POSE_A)
-                if self.freeze_path and traj_B_to_A.joint_trajectory.points:
-                    self.get_logger().info(
-                        f"Freezing B -> A trajectory "
-                        f"({len(traj_B_to_A.joint_trajectory.points)} points) for reuse."
-                    )
-                    self.ref_traj_B_to_A = traj_B_to_A
 
+
+            # refresh speed between legs if a new speed_set arrived ---
+            rclpy.spin_once(self, timeout_sec=0.0)
+
+            if self.speed_version != last_used_version:
+                last_used_version = self.speed_version
+                speed_scale = self.get_speed_scale()
+                self.get_logger().info(
+                    f"Speed updated mid-cycle, using new speed_scale for B->A={speed_scale:.3f}"
+                )
+            # ---------------------------------------------------------------
+
+            
             if traj_B_to_A.joint_trajectory.points:
                 scaled_BA = self.scale_trajectory_timing(traj_B_to_A, speed_scale)
                 ok = self.execute_joint_trajectory(scaled_BA)
