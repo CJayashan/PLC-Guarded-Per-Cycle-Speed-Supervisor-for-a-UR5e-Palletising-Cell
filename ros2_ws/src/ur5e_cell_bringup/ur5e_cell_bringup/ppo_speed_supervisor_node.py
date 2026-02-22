@@ -31,11 +31,11 @@ PAYLOAD_MASS_TOPIC = "/payload_mass"   # purely for logging/telemetry (does NOT 
 DEFAULT_MODE = "train"      # train | finetune | eval
 DEFAULT_RUN_ID = "run0"
 DEFAULT_MODEL_DIR = "."
-DEFAULT_MASS = 2.0
+DEFAULT_MASS = 3.377
 
-DEFAULT_TRAIN_STEPS = 1000
-DEFAULT_FINETUNE_STEPS = 200
-DEFAULT_EVAL_STEPS = 50
+DEFAULT_TRAIN_STEPS = 256
+DEFAULT_FINETUNE_STEPS = 128
+DEFAULT_EVAL_STEPS = 256
 
 # Speed bounds
 MIN_SPEED = 0.30
@@ -44,7 +44,7 @@ SPEED_RESOLUTION = 0.01
 DEFAULT_SPEED = 0.50
 
 # Episode / warmup behavior
-EPISODE_LEN = 1000
+EPISODE_LEN = 256
 IGNORE_FIRST_N_CYCLES = 4
 
 # Safety clamp as function of mass (heavier -> lower allowed max speed)
@@ -53,12 +53,12 @@ MASS_SPEED_SLOPE = 0.02
 # Reward weights
 W_TIME = 1.0
 W_VEL  = 1.0
-W_TAU  = 1.0
-W_MASS = 0.0            # keep 0 in sim unless you really want mass penalty
+W_TAU  = 0.0
+W_MASS = 1.0            # keep 0 in sim unless you really want mass penalty
 STOP_PENALTY = 8.0
 FAIL_PENALTY = 8.0
 
-SAFE_VEL_RATIO_LIMIT = 0.60
+SAFE_VEL_RATIO_LIMIT = 0.03
 SAFE_TAU_RATIO_LIMIT = 0.60
 HINGE_SLOPE = 2.0
 
@@ -67,12 +67,12 @@ SUMMARY_WAIT_TIMEOUT_SEC = 60.0
 # PPO hyperparameters
 PPO_N_STEPS = 64
 PPO_BATCH_SIZE = 64
-PPO_LEARNING_RATE = 3e-4
+PPO_LEARNING_RATE = 2e-4
 PPO_GAMMA = 0.95
-PPO_ENT_COEF = 0.005
+PPO_ENT_COEF = 0.01
 
 REQUIRE_SPEED_MATCH = True
-SPEED_MATCH_TOL = 0.01
+SPEED_MATCH_TOL = 0.02
 USE_SIM_TIME = True
 
 

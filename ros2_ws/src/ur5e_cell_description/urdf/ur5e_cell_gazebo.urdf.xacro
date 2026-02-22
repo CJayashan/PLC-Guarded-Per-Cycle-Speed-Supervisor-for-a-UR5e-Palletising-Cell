@@ -14,7 +14,7 @@
   <!-- Simple payload "tray" attached at tool0 (TCP side) -->
   <!-- UR5e rated max payload is 5 kg (tool + tray + workpiece). In real hardware,
   keep total payload <= 5 kg. Here we use this for simulation studies only. -->
-  <xacro:arg name="payload_mass"    default="1.0"/>  <!-- [kg], change this to 0, 1, 2, ... -->
+  <xacro:arg name="payload_mass"    default="3.377"/>  <!-- [kg], change this to 0, 1, 2, ... -->
   <xacro:arg name="payload_size_x"  default="0.2"/> <!-- [m] -->
   <xacro:arg name="payload_size_y"  default="0.01"/>
   <xacro:arg name="payload_size_z"  default="0.2"/>

@@ -25,22 +25,22 @@
   </group_state>
 
   <group_state name="A" group="ur_manipulator">
-    <joint name="shoulder_pan_joint"  value="-0.0174533"/>  <!-- -1° -->
-    <joint name="shoulder_lift_joint" value="-0.4886922"/>  <!-- -28° -->
-    <joint name="elbow_joint"         value="0.8377580"/>   <!--  48° -->
-    <joint name="wrist_1_joint"       value="-0.3316126"/>  <!-- -19° -->
-    <joint name="wrist_2_joint"       value="0.0698132"/>   <!--   4° -->
-    <joint name="wrist_3_joint"       value="-0.0349066"/>  <!--  -2° -->
+    <joint name="shoulder_pan_joint"  value="1.5251"/>  <!-- -1° -->
+    <joint name="shoulder_lift_joint" value="-1.1297"/>  <!-- -28° -->
+    <joint name="elbow_joint"         value=" 1.6778"/>   <!--  48° -->
+    <joint name="wrist_1_joint"       value="-2.1234"/>  <!-- -19° -->
+    <joint name="wrist_2_joint"       value="-1.5713"/>   <!--   4° -->
+    <joint name="wrist_3_joint"       value=" 0.1253"/>  <!--  -2° -->
   </group_state>
 
   <!-- Pose B: [-1, -152, -48, -161, 4, 2] degrees -->
   <group_state name="B" group="ur_manipulator">
-    <joint name="shoulder_pan_joint"  value="0.0174533"/>   
-    <joint name="shoulder_lift_joint" value="-2.652900"/>  
-    <joint name="elbow_joint"         value="-0.8377580"/>   
-    <joint name="wrist_1_joint"       value="-2.809980"/>  
-    <joint name="wrist_2_joint"       value="0.0698132"/>  
-    <joint name="wrist_3_joint"       value="0.0349066"/>   
+    <joint name="shoulder_pan_joint"  value="3.1143"/>   
+    <joint name="shoulder_lift_joint" value="-1.3546"/>  
+    <joint name="elbow_joint"         value=" 1.5607"/>   
+    <joint name="wrist_1_joint"       value="-1.8043"/>  
+    <joint name="wrist_2_joint"       value=" -1.5439"/>  
+    <joint name="wrist_3_joint"       value="0.1253"/>   
   </group_state>
 
   <disable_collisions link1="base_link"           link2="base_link_inertia" reason="Adjacent"/>

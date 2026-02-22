@@ -26,8 +26,8 @@ VENDOR_TAU_MAX = [150.0, 150.0, 150.0, 28.0, 28.0, 28.0]
 VENDOR_VEL_MAX = [math.radians(180.0)] * 6
 
 # Safety scaling: we treat these as our "1.0" safe limit for reward
-SAFE_TORQUE_SCALE = 0.7   # 70% of vendor torque
-SAFE_VEL_SCALE    = 0.5   # 50% of vendor velocity
+SAFE_TORQUE_SCALE = 0.35   # 70% of vendor torque
+SAFE_VEL_SCALE    = 0.55   # 50% of vendor velocity
 
 SAFE_TAU_MAX = [SAFE_TORQUE_SCALE * t for t in VENDOR_TAU_MAX]
 SAFE_VEL_MAX = [SAFE_VEL_SCALE * v for v in VENDOR_VEL_MAX]
@@ -46,11 +46,10 @@ MASS_REWARD_WEIGHT   = 0.5
 # ============================================================
 
 # Candidate speeds the bandit can choose between
-DEFAULT_SPEED_CANDIDATES = [0.3, 0.35, 0.4, 0.45, 0.5,
-                            0.55, 0.6, 0.65, 0.7, 0.8, 0.9]
+DEFAULT_SPEED_CANDIDATES = [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9]
 
 # Initial speed for the very first motion
-DEFAULT_INITIAL_SPEED = 0.3
+DEFAULT_INITIAL_SPEED = 0.2
 
 # UCB exploration weight:
 #  - bigger  => explores more
@@ -91,6 +90,9 @@ class BayesianSpeedSupervisor(Node):
         self.declare_parameter("ucb_beta", DEFAULT_UCB_BETA)         # exploration weight
         self.declare_parameter("stop_penalty", DEFAULT_STOP_PENALTY)     # seconds of extra punishment
         self.declare_parameter("warmup_motions", DEFAULT_WARMUP_MOTIONS)
+        self.declare_parameter("real", False)
+        self.real = bool(self.get_parameter("real").value)
+
 
         # Payload for this scenario (kg) – used in the mass reward
         self.declare_parameter("payload_mass", DEFAULT_PAYLOAD_MASS)
@@ -108,7 +110,7 @@ class BayesianSpeedSupervisor(Node):
 
         if not self.speed_candidates:
             # Fallback in case param loading behaves differently
-            self.speed_candidates = [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 0.9]
+            self.speed_candidates = [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9]
 
         self.speed_candidates = sorted(self.speed_candidates)
 
@@ -258,20 +260,31 @@ class BayesianSpeedSupervisor(Node):
 
         for j, jname in enumerate(self.joint_names):
             idx = self.joint_index_map.get(jname)
-            if idx is None:
-                continue
-            if idx >= len(msg.position):
+            if idx is None or idx >= len(msg.position):
                 continue
 
-            pos = msg.position[idx]
-            positions[j] = pos
+            positions[j] = msg.position[idx]
 
-            # Effort: track max |effort|
+            # Effort
             if idx < len(msg.effort):
                 eff = msg.effort[idx]
                 abs_eff = abs(eff)
                 if abs_eff > self.max_abs_effort[j]:
                     self.max_abs_effort[j] = abs_eff
+
+            # Velocity (REAL: use driver values directly)
+            if self.real and idx < len(msg.velocity):
+                v = msg.velocity[idx]
+                abs_v = abs(v)
+                if abs_v > self.max_abs_velocity[j]:
+                    self.max_abs_velocity[j] = abs_v
+
+        # If real robot, don't do finite-diff at all
+        if self.real:
+            self.prev_js_time = now
+            self.prev_js_positions = positions
+            return
+
 
         # Estimate velocities from position differences
         if self.prev_js_time is not None and any(p is not None for p in positions):

@@ -9,7 +9,6 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
 
-
 class CycleLoggerNode(Node):
     """
     Advanced cycle logger.
@@ -28,7 +27,6 @@ class CycleLoggerNode(Node):
         self.declare_parameter('csv_path', 'cycle_log.csv')
         self.declare_parameter('run_id', 'test_run')
         # Payload mass used in this scenario (kg).
-        # Keep this in sync with the payload_mass xacro arg in ur5e_cell_gazebo.urdf.xacro.
         self.declare_parameter('payload_mass', 5.0)
 
         csv_path_str = (
@@ -48,7 +46,6 @@ class CycleLoggerNode(Node):
         )
 
         # --- Joint configuration for UR5e (6 joints) ---
-        # Names as they appear in /joint_states
         self.joint_names = [
             "shoulder_pan_joint",
             "shoulder_lift_joint",
@@ -57,7 +54,6 @@ class CycleLoggerNode(Node):
             "wrist_2_joint",
             "wrist_3_joint",
         ]
-        # Short labels for CSV columns
         self.joint_short_names = [
             "shoulder_pan",
             "shoulder_lift",
@@ -67,26 +63,24 @@ class CycleLoggerNode(Node):
             "wrist_3",
         ]
 
-        # Previous joint state for finite-difference velocity
-        self.prev_js_time = None                       # float (sec)
+        # Previous joint state for finite-difference velocity (SIM path)
+        self.prev_js_time = None
         self.prev_js_positions = [None] * len(self.joint_names)
 
-        # Per-cycle maxima (already there, but just to be clear)
+        # Per-cycle maxima
         self.max_abs_effort = [0.0] * len(self.joint_names)
         self.max_abs_velocity = [0.0] * len(self.joint_names)
-        
-        
-        # Vendor-like max joint torques for UR5e (Nm):
-        # Base, Shoulder, Elbow: 150 Nm; Wrists: 28 Nm. :contentReference[oaicite:2]{index=2}
+
+        # Vendor-like max joint torques for UR5e (Nm)
         self.tau_max = [150.0, 150.0, 150.0, 28.0, 28.0, 28.0]
 
-        # Max joint speed: 180 deg/s = pi rad/s for all joints. :contentReference[oaicite:3]{index=3}
+        # Max joint speed: 180 deg/s = pi rad/s for all joints
         self.vel_max = [math.radians(180.0)] * 6
 
         # Map from joint name -> index in JointState arrays
         self.joint_index_map = {}
 
-        # Per-motion metrics (reset every time zone_busy rises)
+        # Per-motion metrics
         self.metrics_active = False
         self.max_abs_effort = [0.0] * len(self.joint_names)
         self.max_abs_velocity = [0.0] * len(self.joint_names)
@@ -101,18 +95,17 @@ class CycleLoggerNode(Node):
         header = [
             'run_id',
             'cycle_index',
-            'payload_mass',          # kg
-            'speed',                 # current speed_set during this motion
+            'payload_mass',
+            'speed',
             't_start',
             't_end',
             'duration',
             'success',
             'had_stop_req',
-            'max_torque_ratio',      # max over all joints
-            'max_velocity_ratio',    # max over all joints
+            'max_torque_ratio',
+            'max_velocity_ratio',
         ]
 
-        # Per-joint columns: max effort/velocity and their ratios
         for short_name in self.joint_short_names:
             header.extend([
                 f'{short_name}_max_effort',
@@ -132,81 +125,68 @@ class CycleLoggerNode(Node):
         self.current_cycle_had_stop = False
         self.current_speed = 0.0
         self.cycle_index = 0
-        
 
-        # Latched values for the CURRENT cycle (so PPO can't overwrite them mid-motion)
+        # Latched values for the CURRENT cycle
         self.cycle_speed_latched = 0.0
         self.cycle_payload_mass_latched = 0.0
 
-        # True while a cycle is running and not yet finalized
         self.awaiting_cycle_end = False
 
-        # Grace window so cycle_ok arriving just after zone_busy fall still counts
         self.cycle_ok_grace_sec = 0.2
         self.pending_end_time = None
         self.pending_finalize_timer = None
 
-        # Publishers 
+        # Publishers
         self.summary_pub = self.create_publisher(Float64MultiArray, 'cycle_summary', 10)
-
 
         # Subscriptions
         self.create_subscription(Bool, 'zone_busy', self.on_zone_busy, 10)
         self.create_subscription(Bool, 'cycle_ok', self.on_cycle_ok, 10)
         self.create_subscription(Bool, 'stop_req', self.on_stop_req, 10)
         self.create_subscription(Float64, 'speed_set', self.on_speed_set, 10)
-        self.create_subscription(Float64, 'payload_mass', self.on_payload_mass, 10)  # PPO override
-        self.create_subscription(
-            JointState,
-            'joint_states',
-            self.joint_states_callback,
-            50,
-        )
+        self.create_subscription(Float64, 'payload_mass', self.on_payload_mass, 10)
+        self.create_subscription(JointState, 'joint_states', self.joint_states_callback, 50)
 
         # --- Torque estimator wiring (Gazebo joint_states effort is often zero) ---
         self.declare_parameter('estimated_effort_topic', 'estimated_joint_effort')
         self.declare_parameter('use_estimated_effort', True)
         self.declare_parameter('effort_zero_tol', 1e-6)
 
+        # >>> NEW: Real mode switch
+        # If real==True:
+        #   - velocity uses msg.velocity directly
+        #   - estimator effort used ONLY if all real efforts are ~zero
+        self.declare_parameter('real', False)
+
         self.use_estimated_effort = bool(self.get_parameter('use_estimated_effort').value)
         self.effort_zero_tol = float(self.get_parameter('effort_zero_tol').value)
+        self.real = bool(self.get_parameter('real').value)
 
         # Latest estimated torques (same order as self.joint_names)
         self.latest_est_effort = [None] * len(self.joint_names)
         self.latest_est_effort_time = None
 
         est_topic = str(self.get_parameter('estimated_effort_topic').value)
-        self.create_subscription(
-            Float64MultiArray,
-            est_topic,
-            self.on_estimated_joint_effort,
-            10,
-        )
-
+        self.create_subscription(Float64MultiArray, est_topic, self.on_estimated_joint_effort, 10)
 
     def get_now_sec(self) -> float:
-        """Return current ROS time in seconds (float)."""
         now = self.get_clock().now()
         return now.nanoseconds / 1e9
 
     # --- Callbacks ---
 
     def on_speed_set(self, msg: Float64):
-        # Just remember latest speed value
         self.current_speed = float(msg.data)
 
     def on_payload_mass(self, msg: Float64):
-        """Optional runtime update of payload mass (used by PPO sweeps)."""
         self.payload_mass = float(msg.data)
 
     def on_cycle_ok(self, msg: Bool):
         if not msg.data:
             return
 
-        # mark OK happened during this cycle
         self.current_cycle_had_ok = True
 
-        # If motion already ended (zone_busy fell), finalize NOW but using the STORED motion end time
         if self.pending_end_time is not None and self.current_cycle_start is not None and self.awaiting_cycle_end:
             if self.pending_finalize_timer is not None:
                 self.pending_finalize_timer.cancel()
@@ -216,35 +196,24 @@ class CycleLoggerNode(Node):
             self.pending_end_time = None
             self._finalize_cycle(t_end, end_reason="zone_fall+cycle_ok")
 
-        # else: motion still ongoing -> just wait for zone_busy to fall
-
-
     def on_stop_req(self, msg: Bool):
-        # If stop_req ever becomes True during a cycle, mark it
         if msg.data:
             self.current_cycle_had_stop = True
 
     def on_estimated_joint_effort(self, msg: Float64MultiArray):
-        # Expect 6 values in UR5e joint order.
         if msg.data is None or len(msg.data) < len(self.joint_names):
             return
-
         self.latest_est_effort = [float(msg.data[i]) for i in range(len(self.joint_names))]
         self.latest_est_effort_time = self.get_now_sec()
-  
 
     def joint_states_callback(self, msg: JointState):
-        # Time "now" in seconds
         now = self.get_clock().now().nanoseconds * 1e-9
 
-        # Map joint name -> index in the incoming message
         name_to_idx = {name: i for i, name in enumerate(msg.name)}
 
-        # Extract positions/efforts in our fixed joint order.
-        # Use None for missing joints (avoid fake jumps).
         positions = [None] * len(self.joint_names)
         efforts   = [None] * len(self.joint_names)
-
+        velocities = [None] * len(self.joint_names)
 
         for j, jname in enumerate(self.joint_names):
             idx = name_to_idx.get(jname)
@@ -254,65 +223,74 @@ class CycleLoggerNode(Node):
                 continue
 
             positions[j] = msg.position[idx]
+
             if idx < len(msg.effort):
                 efforts[j] = msg.effort[idx]
 
-        # --- If Gazebo effort is zero, fall back to estimated effort ---
+            if idx < len(msg.velocity):
+                velocities[j] = msg.velocity[idx]
+
+        # --- Effort fallback to estimator ---
+        # real==True: estimator is used ONLY if ALL real efforts are ~zero
+        # real==False: keep old sim behavior (per-joint fallback allowed)
         if self.metrics_active and self.use_estimated_effort:
             have_est = all(v is not None for v in self.latest_est_effort)
 
-            # If *no* joint effort looks valid, switch all joints to estimator
             effort_valid_any = any(
                 (e is not None and abs(e) > self.effort_zero_tol) for e in efforts
             )
 
             if have_est and (not effort_valid_any):
+                # all efforts look invalid -> replace all with estimator
                 efforts = list(self.latest_est_effort)
-            elif have_est:
-                # Per-joint fallback (if some joints are missing/zero)
+            elif (not self.real) and have_est:
+                # SIM behavior: per-joint patching allowed
                 for j in range(len(efforts)):
                     if efforts[j] is None or abs(efforts[j]) <= self.effort_zero_tol:
                         efforts[j] = self.latest_est_effort[j]
 
-
-        # --- IMPORTANT: if we are NOT inside a motion segment, do not accumulate metrics ---
-        # But still keep prev_* updated, so dt doesn't explode when motion starts.
+        # If not inside motion, do not accumulate metrics; still update prev state
         if not self.metrics_active:
             self.prev_js_time = now
             self.prev_js_positions = positions
             return
 
-        # --- We ARE inside a motion segment: accumulate metrics ---
-
-        # 1) Effort maxima (only while active)
+        # 1) Effort maxima
         for j, eff in enumerate(efforts):
             if eff is None:
                 continue
-            abs_eff = abs(eff)
+            abs_eff = abs(float(eff))
             if abs_eff > self.max_abs_effort[j]:
                 self.max_abs_effort[j] = abs_eff
 
-        # 2) Velocity maxima from finite differences (only while active)
-        if self.prev_js_time is not None and self.prev_js_positions is not None:
-            dt = now - self.prev_js_time
-            if dt > 1e-6:
-                for j in range(len(self.joint_names)):
-                    prev_pos = self.prev_js_positions[j]
-                    curr_pos = positions[j]
-                    if prev_pos is None or curr_pos is None:
-                        continue
+        # 2) Velocity maxima
+        if self.real:
+            # REAL: take driver values directly (no checks)
+            for j, v in enumerate(velocities):
+                if v is None:
+                    continue
+                abs_v = abs(float(v))
+                if abs_v > self.max_abs_velocity[j]:
+                    self.max_abs_velocity[j] = abs_v
+        else:
+            # SIM: finite-difference on position
+            if self.prev_js_time is not None and self.prev_js_positions is not None:
+                dt = now - self.prev_js_time
+                if dt > 1e-6:
+                    for j in range(len(self.joint_names)):
+                        prev_pos = self.prev_js_positions[j]
+                        curr_pos = positions[j]
+                        if prev_pos is None or curr_pos is None:
+                            continue
+                        v_est = (curr_pos - prev_pos) / dt
+                        abs_v = abs(v_est)
+                        if abs_v > self.max_abs_velocity[j]:
+                            self.max_abs_velocity[j] = abs_v
 
-                    v_est = (curr_pos - prev_pos) / dt
-                    abs_v = abs(v_est)
-                    if abs_v > self.max_abs_velocity[j]:
-                        self.max_abs_velocity[j] = abs_v
-
-        # Update prev for next callback
         self.prev_js_time = now
         self.prev_js_positions = positions
 
     def _on_fallback_finalize_timer(self):
-        # One-shot timer callback: if cycle_ok never arrived, finalize using the stored zone-fall time.
         if self.pending_finalize_timer is not None:
             self.pending_finalize_timer.cancel()
             self.pending_finalize_timer = None
@@ -325,19 +303,17 @@ class CycleLoggerNode(Node):
         self.pending_end_time = None
         self._finalize_cycle(t_end, end_reason="zone_fall_grace_expired")
 
-
     def on_zone_busy(self, msg: Bool):
         z = bool(msg.data)
         now = self.get_now_sec()
 
-        # Rising edge: start of a motion segment
         if not self.last_zone_busy and z:
             if self.pending_finalize_timer is not None:
                 self.pending_finalize_timer.cancel()
                 self.pending_finalize_timer = None
             self.pending_end_time = None
             self.current_cycle_start = now
-            # Latch inputs at cycle START (this is the key PPO fix)
+
             self.cycle_speed_latched = float(self.current_speed)
             self.cycle_payload_mass_latched = float(self.payload_mass)
             self.awaiting_cycle_end = True
@@ -351,19 +327,14 @@ class CycleLoggerNode(Node):
             self.prev_js_time = None
             self.prev_js_positions = [None] * len(self.joint_names)
 
-            # Reset per-motion metrics and arm them
             self.metrics_active = True
-            self.max_abs_effort = [0.0] * len(self.joint_names)
-            self.max_abs_velocity = [0.0] * len(self.joint_names)
 
             self.get_logger().info(f"Cycle {self.cycle_index} started.")
 
-        # Falling edge: end of a motion segment -> log a row
         elif self.last_zone_busy and not z and self.current_cycle_start is not None and self.awaiting_cycle_end:
             self.metrics_active = False
-            self.pending_end_time = now  # exact end of motion
+            self.pending_end_time = now
 
-            # If cycle_ok already happened earlier, finalize immediately using zone-fall time
             if self.current_cycle_had_ok:
                 if self.pending_finalize_timer is not None:
                     self.pending_finalize_timer.cancel()
@@ -372,9 +343,7 @@ class CycleLoggerNode(Node):
                 t_end = self.pending_end_time
                 self.pending_end_time = None
                 self._finalize_cycle(t_end, end_reason="zone_fall_ok_already")
-
             else:
-                # Otherwise give cycle_ok a short grace window to arrive
                 if self.pending_finalize_timer is None:
                     self.pending_finalize_timer = self.create_timer(
                         self.cycle_ok_grace_sec,
@@ -383,7 +352,6 @@ class CycleLoggerNode(Node):
 
         self.last_zone_busy = z
 
-
     def _finalize_cycle(self, t_end: float, end_reason: str = ""):
         if self.current_cycle_start is None:
             return
@@ -391,13 +359,10 @@ class CycleLoggerNode(Node):
         t_start = self.current_cycle_start
         duration = t_end - t_start
 
-        # Stop collecting metrics
         self.metrics_active = False
 
-        # Success now uses cycle_ok (better for PPO)
         success = (self.current_cycle_had_ok and (not self.current_cycle_had_stop))
 
-        # Compute per-joint torque/velocity ratios and global maxima
         torque_ratios = []
         velocity_ratios = []
         for j in range(len(self.joint_names)):
@@ -413,7 +378,6 @@ class CycleLoggerNode(Node):
         max_torque_ratio = max(torque_ratios) if torque_ratios else 0.0
         max_velocity_ratio = max(velocity_ratios) if velocity_ratios else 0.0
 
-        # Publish PPO summary using LATCHED speed/mass
         summary = Float64MultiArray()
         summary.data = [
             float(self.cycle_index),
@@ -427,7 +391,6 @@ class CycleLoggerNode(Node):
         ]
         self.summary_pub.publish(summary)
 
-        # Console log
         self.get_logger().info(
             f"Cycle {self.cycle_index} ended ({end_reason}): "
             f"speed={self.cycle_speed_latched:.3f}, "
@@ -438,7 +401,6 @@ class CycleLoggerNode(Node):
             f"max_velocity_ratio={max_velocity_ratio:.3f}"
         )
 
-        # Write CSV row (use LATCHED speed/mass)
         row = [
             self.run_id,
             self.cycle_index,
@@ -464,7 +426,6 @@ class CycleLoggerNode(Node):
         self.csv_writer.writerow(row)
         self.csv_file.flush()
 
-        # Advance cycle
         self.cycle_index += 1
         self.current_cycle_start = None
         self.awaiting_cycle_end = False
@@ -473,7 +434,6 @@ class CycleLoggerNode(Node):
         self.current_cycle_had_stop = False
 
     def destroy_node(self):
-        # Make sure CSV is closed cleanly
         try:
             if hasattr(self, 'csv_file') and self.csv_file:
                 self.csv_file.close()
